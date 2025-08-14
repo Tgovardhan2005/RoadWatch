@@ -95,6 +95,19 @@ app.post('/api/auth/login', async (req, res) => {
     res.status(500).json({ message: e.message });
   }
 });
+// --- NEW: verify credentials against MongoDB ---
+app.get('/api/auth/verify', auth(), async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('name email role createdAt');
+    if(!user) return res.status(404).json({ message: 'User not found' });
+    return res.json({
+      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      tokenPayload: req.user
+    });
+  } catch (e) {
+    return res.status(500).json({ message: e.message });
+  }
+});
 
 // --- Report Routes ---
 app.get('/api/reports', async (req, res) => {

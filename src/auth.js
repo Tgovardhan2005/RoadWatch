@@ -12,3 +12,16 @@ export function authFetch(url,options={}){
     headers:{ ...(options.headers||{}), ...(token?{Authorization:`Bearer ${token}`}:{}) }
   });
 }
+// --- NEW: remote verify against backend (MongoDB) ---
+export async function verifyAuth(){
+  const token = getToken();
+  if(!token) return null;
+  try{
+    const res = await authFetch('http://localhost:5001/api/auth/verify');
+    if(!res.ok) return null;
+    const data = await res.json();
+    return data; // { user, tokenPayload }
+  }catch{
+    return null;
+  }
+}

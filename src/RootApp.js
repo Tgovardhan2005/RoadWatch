@@ -5,7 +5,7 @@ import LandingPage from './components/LandingPage';
 import Login from './components/Auth/Login';
 import Register from './components/Auth/Register';
 import AdminDashboard from './components/AdminDashboard';
-import { getTokenPayload, logout } from './auth';
+import { getTokenPayload, logout, verifyAuth } from './auth';
 
 export default function RootApp() {
   const [auth, setAuth] = useState(() => getTokenPayload());
@@ -13,6 +13,20 @@ export default function RootApp() {
     const h = () => setAuth(getTokenPayload());
     window.addEventListener('storage', h);
     return () => window.removeEventListener('storage', h);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const verified = await verifyAuth();
+      if (!active) return;
+      if (!verified) {
+        logout();
+        setAuth(null);
+      } else {
+        setAuth(verified.tokenPayload);
+      }
+    })();
+    return () => { active = false; };
   }, []);
   const isAdmin = auth?.role === 'admin';
 
