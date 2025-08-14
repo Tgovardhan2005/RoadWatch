@@ -2,4 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Your custom styles can follow */
+/* Custom utilities */
+.hero-glow {
+  @apply drop-shadow-[0_0_12px_rgba(255,255,255,0.35)];
+}
+/* ...existing code or additional custom styles... */
