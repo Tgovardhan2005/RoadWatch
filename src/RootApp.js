@@ -59,7 +59,16 @@ export default function RootApp() {
             <Route path="/login" element={auth ? <Navigate to="/reports" /> : <Login onAuth={() => setAuth(getTokenPayload())} />} />
             <Route path="/register" element={auth ? <Navigate to="/reports" /> : <Register onAuth={() => setAuth(getTokenPayload())} />} />
             <Route path="/reports" element={auth ? <App /> : <Navigate to="/login" />} />
-            <Route path="/admin" element={isAdmin ? <AdminDashboard /> : <Navigate to="/login" />} />
+            <Route
+              path="/admin"
+              element={
+                isAdmin
+                  ? <AdminDashboard />
+                  : auth
+                    ? <Navigate to="/reports" />
+                    : <Navigate to="/login" />
+              }
+            />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </div>

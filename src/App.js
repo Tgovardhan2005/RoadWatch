@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { getTokenPayload, authFetch } from './auth'; // modified import
+import { getTokenPayload, authFetch } from './auth';
+import { useNavigate } from 'react-router-dom';
 
-const API_BASE = 'http://localhost:5001'; // added
+const API_BASE = 'http://localhost:5001';
 
 // --- Fix for default Leaflet icon ---
 // This is the correct way to reference icon images in a local Create React App environment.
@@ -22,14 +23,15 @@ export default function App() {
     const [loading, setLoading] = useState(true);
     const [appError, setAppError] = useState(null);
     const isAdmin = getTokenPayload()?.role === 'admin';
-    const authPayload = getTokenPayload(); // added
-    const isAuthed = !!authPayload; // new
+    const authPayload = getTokenPayload();
+    const isAuthed = !!authPayload;
+    const navigate = useNavigate();
 
     // --- Data Fetching from Backend ---
     const fetchReports = async () => {
         try {
             setLoading(true);
-            const response = await authFetch(`${API_BASE}/api/reports`); // switched to authFetch
+            const response = await authFetch(`${API_BASE}/api/reports`);
             if (!response.ok) {
                 throw new Error('Network response was not ok');
             }
@@ -47,8 +49,8 @@ export default function App() {
         fetchReports();
     }, []);
 
-    useEffect(()=>{ if(isAdmin && view === 'report') setView('map'); },[isAdmin, view]); // prevent admin report view
-    useEffect(()=>{ if(!isAuthed && view === 'report') setView('map'); },[isAuthed, view]); // block unauth report form
+    useEffect(()=>{ if(isAdmin && view === 'report') setView('map'); },[isAdmin, view]);
+    useEffect(()=>{ if(!isAuthed && view === 'report') setView('map'); },[isAuthed, view]);
 
     if (loading) {
         return <div className="flex items-center justify-center h-screen bg-gray-100"><div className="text-xl font-semibold">Loading RoadWatch...</div></div>;
@@ -88,7 +90,10 @@ export default function App() {
                     {isAdmin && (
                       <>
                         <button onClick={() => setView('map')} className={`px-3 py-2 text-sm md:text-base rounded-md font-semibold ${view === 'map' ? 'bg-blue-500 text-white shadow' : 'text-gray-600 hover:bg-gray-200'}`}>Map</button>
-                        <button onClick={() => window.location.href='/admin'} className="px-3 py-2 text-sm md:text-base rounded-md font-semibold bg-indigo-500 text-white shadow">Admin Dashboard</button>
+                        <button
+                          onClick={() => navigate('/admin')}
+                          className="px-3 py-2 text-sm md:text-base rounded-md font-semibold bg-indigo-500 text-white shadow"
+                        >Admin Dashboard</button>
                         <button onClick={() => setView('list')} className={`px-3 py-2 text-sm md:text-base rounded-md font-semibold ${view === 'list' ? 'bg-blue-500 text-white shadow' : 'text-gray-600 hover:bg-gray-200'}`}>Reports List</button>
                       </>
                     )}
@@ -309,7 +314,7 @@ function ReportForm({ setView, onReportSubmitted }) {
                 userName: userName || 'Anonymous',
             };
 
-            const response = await authFetch(`${API_BASE}/api/reports`, { // ensure base constant
+            const response = await authFetch(`${API_BASE}/api/reports`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

@@ -1,3 +1,14 @@
+// Load environment variables (first line)
+const path = require('path');
+const fs = require('fs');
+(() => {
+  const rootEnv = path.join(__dirname, '..', '.env');
+  const localEnv = path.join(__dirname, '.env');
+  if (fs.existsSync(rootEnv)) require('dotenv').config({ path: rootEnv });
+  else if (fs.existsSync(localEnv)) require('dotenv').config({ path: localEnv });
+  else require('dotenv').config(); // fallback
+})();
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -8,18 +19,44 @@ const jwt = require('jsonwebtoken');
 const { Types } = mongoose;
 
 const app = express();
-const port = 5001;
+const port = process.env.PORT || 5001;
 
 // --- Middleware ---
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // accept large Base64 strings
 
 // --- MongoDB Connection ---
-const mongoURI = "mongodb+srv://govardhant23cse:hVVc6EgRkRUBJoZ3@roadwatchcluster.cgajzfu.mongodb.net/roadwatch?retryWrites=true&w=majority&appName=RoadWatchCluster";
+const mongoURI = process.env.MONGO_URI;
+if (!mongoURI) {
+  console.error('Missing MONGO_URI env variable');
+  process.exit(1);
+}
+
+// Simple pre-flight validation
+if (/[<>]/.test(mongoURI)) {
+  console.error('MONGO_URI contains < or > characters. Remove angle brackets around username/password.');
+  process.exit(1);
+}
+
+// Mask password for logging
+function maskMongo(uri) {
+  return uri.replace(/(mongodb(\+srv)?:\/\/[^:]+:)([^@]+)(@)/, (_, a, _b, _pwd, d) => a + '****' + d);
+}
+console.log('[Mongo] Connecting to', maskMongo(mongoURI));
 
 mongoose.connect(mongoURI)
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+  .then(() => console.log('[Mongo] Connected'))
+  .catch(err => {
+    console.error('[Mongo] Initial connection error code:', err.code, 'name:', err.name);
+    if (err.message && /bad auth/i.test(err.message)) {
+      console.error('[Mongo] Authentication failed. Checklist:');
+      console.error(' - Username & password correct (Atlas Database Access tab)');
+      console.error(' - No angle brackets <> left in .env');
+      console.error(' - Special chars in password are URL-encoded');
+      console.error(' - IP address / Network access allowed in Atlas');
+      console.error(' - Using correct cluster host');
+    }
+  });
 
 // --- Schemas ---
 const reportSchema = new mongoose.Schema({
@@ -38,27 +75,41 @@ const Report = mongoose.model('Report', reportSchema);
 
 const userSchema = new mongoose.Schema({
   name: String,
-  email: { type: String, unique: true },
+  email: { type: String, unique: true }, // keep only one unique definition
   passwordHash: String,
-  role: { type: String, default: 'user' }, // 'user' | 'admin'
+  role: { type: String, default: 'user' },
   createdAt: { type: Date, default: Date.now }
 });
+// Normalize / index email
+userSchema.pre('save', function(next) {
+  if (this.email) this.email = this.email.trim().toLowerCase();
+  next();
+});
+// Removed duplicate manual index to silence warning
+// const User = ...
 const User = mongoose.model('User', userSchema);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'DEV_CHANGE_ME';
 
-// --- Auth middleware ---
+// --- Auth middleware (now validates user against MongoDB each request) ---
 function auth(requiredRole) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     const hdr = req.headers.authorization || '';
     const token = hdr.startsWith('Bearer ') ? hdr.slice(7) : null;
     if (!token) return res.status(401).json({ message: 'No token' });
     try {
       const payload = jwt.verify(token, JWT_SECRET);
-      if (requiredRole && payload.role !== requiredRole) {
+      const user = await User.findById(payload.id).select('name email role');
+      if (!user) return res.status(401).json({ message: 'User no longer exists' });
+      if (requiredRole && user.role !== requiredRole) {
         return res.status(403).json({ message: 'Forbidden' });
       }
-      req.user = payload;
+      req.user = {
+        id: user._id.toString(),
+        email: user.email,
+        role: user.role,
+        name: user.name
+      };
       next();
     } catch {
       return res.status(401).json({ message: 'Invalid token' });
@@ -69,14 +120,15 @@ function auth(requiredRole) {
 // --- Auth Routes ---
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { name, email, password, adminCode } = req.body;
+    let { name, email, password, adminCode } = req.body;
     if (!email || !password) return res.status(400).json({ message: 'Email & password required' });
+    email = email.trim().toLowerCase();
     if (await User.findOne({ email })) return res.status(409).json({ message: 'Email already registered' });
     const passwordHash = await bcrypt.hash(password, 10);
     const role = (adminCode && adminCode === (process.env.ADMIN_CODE || 'ADMIN123')) ? 'admin' : 'user';
     const user = await User.create({ name, email, passwordHash, role });
-    const token = jwt.sign({ id: user._id, email, role }, JWT_SECRET, { expiresIn: '7d' });
-    res.status(201).json({ token, user: { id: user._id, name, email, role } });
+    const token = jwt.sign({ id: user._id, email: user.email, role }, JWT_SECRET, { expiresIn: '7d' });
+    res.status(201).json({ token, user: { id: user._id, name, email: user.email, role } });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
@@ -84,29 +136,22 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    let { email, password } = req.body;
+    email = (email || '').trim().toLowerCase();
     const user = await User.findOne({ email });
     if (!user) return res.status(401).json({ message: 'Invalid credentials' });
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
-    const token = jwt.sign({ id: user._id, email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user._id, name: user.name, email, role: user.role } });
+    const token = jwt.sign({ id: user._id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
 });
-// --- NEW: verify credentials against MongoDB ---
+
+// --- verify now relies on middleware-loaded user ---
 app.get('/api/auth/verify', auth(), async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id).select('name email role createdAt');
-    if(!user) return res.status(404).json({ message: 'User not found' });
-    return res.json({
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
-      tokenPayload: req.user
-    });
-  } catch (e) {
-    return res.status(500).json({ message: e.message });
-  }
+  return res.json({ user: req.user });
 });
 
 // --- Report Routes ---
@@ -139,7 +184,7 @@ app.post('/api/reports', auth(), async (req, res) => {
     return res.status(400).json({ message: 'Description and valid location required' });
   }
   const userId = req.user.id;
-  const finalUserName = userName || req.user.email || 'Anonymous';
+  const finalUserName = req.user.name || req.user.email || 'Anonymous';
   try {
     const newReport = await Report.create({
       description,
@@ -201,6 +246,16 @@ app.get('/_routes', (req, res) => {
     if (m.route) routes.push({ path: m.route.path, methods: Object.keys(m.route.methods) });
   });
   res.json(routes);
+});
+
+app.get('/_health', (req, res) => {
+  const states = ['disconnected','connected','connecting','disconnecting','uninitialized','initialized'];
+  res.json({
+    state: states[mongoose.connection.readyState] || mongoose.connection.readyState,
+    host: mongoose.connection.host,
+    db: mongoose.connection.name,
+    hasUser: !!req.user
+  });
 });
 
 // --- Start the server ---
